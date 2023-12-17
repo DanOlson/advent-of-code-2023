@@ -1,104 +1,101 @@
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Point {
-    pub x: usize,
-    pub y: usize,
+mod vertex;
+
+use vertex::{Data, Vertex};
+
+pub fn part_numbers(input: Vec<String>) -> Vec<u32> {
+    build_adjacency_list(input)
+        .iter()
+        .filter_map(|(vertex, adjacents)| {
+            // find numbers adjacent to symbols
+            match vertex.data {
+                Data::Number(n) => {
+                    if adjacents.iter().any(|v| matches!(v.data, Data::Symbol(_))) {
+                        Some(n)
+                    } else {
+                        None
+                    }
+                },
+                Data::Symbol(_s) => None
+            }
+        })
+        .collect::<Vec<u32>>()
 }
 
-impl Point {
-    pub fn new(x: usize, y: usize) -> Self {
-        Self { x, y }
-    }
+pub fn gear_ratios(input: Vec<String>) -> Vec<u32> {
+    build_adjacency_list(input)
+        .iter()
+        .filter_map(|(vertex, adjacents)| {
+            match vertex.data {
+                Data::Number(_n) => None,
+                Data::Symbol(_s) => {
+                    let iter = adjacents.iter();
+                    if iter.len() == 2 && iter.clone().all(|v| matches!(v.data, Data::Number(_))) {
+                        let gear_ratio = iter.map(|n| {
+                            if let Data::Number(num) = n.data { num } else { 0 }
+                        }).product::<u32>();
+                        Some(gear_ratio)
+                    } else {
+                        None
+                    }
+                }
+            }
+        })
+        .collect::<Vec<u32>>()
 }
 
-pub struct PartNumber {
-    pub number: u32,
-    pub start_pos: Point,
-    pub end_pos: Point,
-}
-
-#[derive(Default)]
-pub struct LineAnalysis {
-    pub numbers: Vec<PartNumber>,
-    pub symbol_positions: Vec<Point>,
-}
-
-pub fn part_numbers(input: Vec<String>) -> Vec<PartNumber> {
-    let mut all_numbers: Vec<PartNumber> = vec![];
-    let mut sym_pos: HashSet<Point> = HashSet::new();
+fn build_adjacency_list(input: Vec<String>) -> HashMap<Vertex, HashSet<Vertex>> {
+    let mut verts_by_line_no: HashMap<usize, Vec<Vertex>> = HashMap::new();
+    let mut adj_list: HashMap<Vertex, HashSet<Vertex>> = HashMap::new();
     input
         .iter()
         .enumerate()
         .for_each(|(y, line)| {
-            let mut analysis = analyze_line(line, y);
-            all_numbers.append(&mut analysis.numbers);
-
-            analysis
-                .symbol_positions
-                .into_iter()
-                .for_each(|p| {
-                    sym_pos.insert(p);
-                });
+            let analysis = analyze_line(line, y);
+            let iter = analysis.iter();
+            let mut with_offset = iter.clone();
+            with_offset.next();
+            for (a, b) in iter.zip(with_offset) {
+                if a.is_adjacent_to(b) {
+                    adj_list.entry(*a).or_default().insert(*b);
+                    adj_list.entry(*b).or_default().insert(*a);
+                }
+            }
+            if y > 0 {
+                let last_verts = verts_by_line_no.get(&(y - 1)).unwrap();
+                analysis
+                    .iter()
+                    .for_each(|v| {
+                        last_verts.iter().for_each(|lv| {
+                            if v.is_adjacent_to(lv) {
+                                adj_list.entry(*lv).or_default().insert(*v);
+                                adj_list.entry(*v).or_default().insert(*lv);
+                            }
+                        })
+                    });
+            }
+            verts_by_line_no.insert(y, analysis);
         });
-
-    all_numbers
-        .into_iter()
-        .filter(|pn| {
-            adjacent_points(pn)
-                .iter()
-                .any(|p| sym_pos.contains(p))
-        })
-        .collect()
+        adj_list
 }
 
-fn analyze_line(line: &str, y: usize) -> LineAnalysis {
-    let mut analysis = LineAnalysis::default();
-    let reg = Regex::new(r"(\d+)|([^\.]{1})").unwrap();
+fn analyze_line(line: &str, y: usize) -> Vec<Vertex> {
+    let mut analysis = vec![];
+    let reg = Regex::new(r"(\d+)|([^.])").unwrap();
     reg.find_iter(line)
         .for_each(|m| {
             if let Ok(number) = m.as_str().parse() {
-                let pn = PartNumber {
-                    number,
-                    start_pos: Point::new(m.start(), y),
-                    end_pos: Point::new(m.end() - 1, y)
-                };
-                analysis.numbers.push(pn);
+                let n = Vertex::number(number, y, m.start());
+                analysis.push(n);
             } else {
-                let symbol_pos = Point::new(m.start(), y);
-                analysis.symbol_positions.push(symbol_pos);
+                let symbol = m.as_str().chars().next().unwrap();
+                let s = Vertex::symbol(symbol, y, m.start());
+                analysis.push(s);
             }
         });
     analysis
-}
-
-fn adjacent_points(part_number: &PartNumber) -> Vec<Point> {
-    let start_x = part_number.start_pos.x;
-    let end_x = part_number.end_pos.x;
-    let y = part_number.start_pos.y;
-
-    let min_y = if y.checked_sub(1).is_some() {
-        y - 1
-    } else {
-        y
-    };
-    let max_y = y + 1;
-    let min_x = if start_x.checked_sub(1).is_some() {
-        start_x - 1
-    } else {
-        start_x
-    };
-    let max_x = end_x + 1;
-    let mut adjacents = vec![];
-    (min_x..=max_x)
-        .for_each(|x| {
-            (min_y..=max_y).for_each(|y| {
-                adjacents.push(Point::new(x, y))
-            })
-        });
-
-    adjacents
 }
 
 #[cfg(test)]
@@ -129,55 +126,13 @@ mod tests {
     }
 
     #[test]
-    fn test_analyze_line_without_symbols() {
-        let analysis = analyze_line("467..114..", 0);
-        assert_eq!(analysis.numbers.len(), 2);
-        assert_eq!(analysis.symbol_positions.len(), 0);
-
-        let first = analysis.numbers.first().unwrap();
-        let second = analysis.numbers.get(1).unwrap();
-        assert_eq!(first.number, 467);
-        assert_eq!(first.start_pos, Point::new(0, 0));
-        assert_eq!(first.end_pos, Point::new(2, 0));
-
-        assert_eq!(second.number, 114);
-        assert_eq!(second.start_pos, Point::new(5, 0));
-        assert_eq!(second.end_pos, Point::new(7, 0));
-    }
-
-    #[test]
-    fn test_analyze_line_with_symbols() {
-        let analysis = analyze_line("467#.114.+", 4);
-        assert_eq!(analysis.numbers.len(), 2);
-        assert_eq!(analysis.symbol_positions.len(), 2);
-
-        let first = analysis.numbers.first().unwrap();
-        let second = analysis.numbers.get(1).unwrap();
-        assert_eq!(first.number, 467);
-        assert_eq!(first.start_pos, Point::new(0, 4));
-        assert_eq!(first.end_pos, Point::new(2, 4));
-
-        assert_eq!(second.number, 114);
-        assert_eq!(second.start_pos, Point::new(5, 4));
-        assert_eq!(second.end_pos, Point::new(7, 4));
-
-        let sym1 = analysis.symbol_positions.first().unwrap();
-        let sym2 = analysis.symbol_positions.get(1).unwrap();
-        assert_eq!(sym1, &Point::new(3, 4));
-        assert_eq!(sym2, &Point::new(9, 4));
-    }
-
-    #[test]
     fn test_sum_part_numbers_from_sample() {
         let sample_input = read_input("input/sample.txt");
         let part_numbers = part_numbers(sample_input);
-        let sum = part_numbers
+        let sum: u32 = part_numbers
             .iter()
-            .map(|pn| {
-                pn.number
-            })
-            .reduce(|acc, n| acc + n)
-            .unwrap();
+            .sum();
+
         assert_eq!(sum, 4361);
     }
 
@@ -185,13 +140,54 @@ mod tests {
     fn test_sum_part_numbers_from_input() {
         let sample_input = read_input("input/input.txt");
         let part_numbers = part_numbers(sample_input);
-        let sum = part_numbers
+        let sum: u32 = part_numbers
             .iter()
-            .map(|pn| {
-                pn.number
-            })
-            .reduce(|acc, n| acc + n)
-            .unwrap();
+            .sum();
+
         assert_eq!(sum, 546563);
+    }
+
+    #[test]
+    fn test_multiple_adjacencies_in_one_line() {
+        let sample_input = vec!["..99*.99*".to_string()];
+        let part_numbers = part_numbers(sample_input);
+        let sum: u32 = part_numbers.iter().sum();
+        assert_eq!(sum, 198);
+    }
+
+    #[test]
+    fn test_multiple_runon_adjacencies_in_one_line() {
+        let sample_input = vec!["..99*/99.".to_string()];
+        let part_numbers = part_numbers(sample_input);
+        let sum: u32 = part_numbers.iter().sum();
+        assert_eq!(sum, 198);
+    }
+
+    #[test]
+    fn test_analyze_line() {
+        let analysis = analyze_line("..99**99..", 0);
+        assert_eq!(analysis.len(), 4);
+        let first_number = analysis.iter().find(|v| matches!(v.data, Data::Number(99)) && v.min_x == 2).unwrap();
+        let second_number = analysis.iter().find(|v| matches!(v.data, Data::Number(99)) && v.min_x == 6).unwrap();
+        let first_symbol = analysis.iter().find(|v| matches!(v.data, Data::Symbol('*')) && v.min_x == 4).unwrap();
+        let second_symbol = analysis.iter().find(|v| matches!(v.data, Data::Symbol('*')) && v.min_x == 5).unwrap();
+        assert!(first_number.is_adjacent_to(first_symbol));
+        assert!(first_symbol.is_adjacent_to(first_number));
+        assert!(second_symbol.is_adjacent_to(second_number));
+        assert!(second_number.is_adjacent_to(second_symbol));
+    }
+
+    #[test]
+    fn test_gear_ratio_with_sample() {
+        let sample_input = read_input("input/sample.txt");
+        let sum: u32 = gear_ratios(sample_input).iter().sum();
+        assert_eq!(sum, 467835);
+    }
+
+    #[test]
+    fn test_gear_ratios_with_input() {
+        let input = read_input("input/input.txt");
+        let sum: u32 = gear_ratios(input).iter().sum();
+        assert_eq!(sum, 91031374);
     }
 }

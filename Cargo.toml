@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "calibration",
-  "cube-game"
-, "engine-schematic-part-numbers"]
+  "cube-game",
+  "engine-schematic-part-numbers"
+]
 resolver = "2"
