@@ -3,5 +3,5 @@ members = [
   "calibration",
   "cube-game",
   "engine-schematic-part-numbers"
-]
+, "scratchcards"]
 resolver = "2"
